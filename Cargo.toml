@@ -1,0 +1,24 @@
+[package]
+name = "type-slicing-bench"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "type_slicing_bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "type-slice"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
