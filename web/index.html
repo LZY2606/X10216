@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>类型切片台</title>
+<style>
+  :root {
+    --bg: #17191f; --panel: #1f232c; --panel2: #262b36; --line: #343b49;
+    --fg: #e8ecf3; --dim: #9aa4b5; --accent: #6cc0ff; --ok: #7fd49b;
+    --bad: #ff7a7a; --warn: #f5c46b; --reuse: #7fd49b; --resolved: #f5c46b;
+    --invalid: #ff7a7a; --new: #6cc0ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 13px/1.5 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+         background: var(--bg); color: var(--fg); height:100vh; display:flex; flex-direction:column; }
+  header { padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--line);
+           display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; color:var(--accent); letter-spacing:2px; }
+  select, button, input[type=text] { background:var(--panel2); color:var(--fg);
+      border:1px solid var(--line); border-radius:6px; padding:4px 8px; font-size:12px; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:#2b4a63; border-color:#3d6d94; }
+  main { flex:1; display:grid; grid-template-columns: 420px 1fr 420px; gap:8px; padding:8px; overflow:hidden; }
+  .pane { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+          display:flex; flex-direction:column; overflow:hidden; min-height:0; }
+  .pane > .bar { padding:6px 10px; border-bottom:1px solid var(--line); display:flex; gap:8px;
+                 align-items:center; background:var(--panel2); flex-wrap:wrap; }
+  .pane > .body { overflow:auto; padding:8px 10px; flex:1; min-height:0; }
+  .tabs { display:flex; gap:4px; }
+  .tab { padding:4px 10px; border-radius:6px 6px 0 0; cursor:pointer; color:var(--dim); }
+  .tab.active { color:var(--fg); background:var(--panel); }
+  .editor-wrap { position:relative; flex:1; min-height:0; font: 12px/1.55 ui-monospace,Menlo,monospace; }
+  .editor-wrap textarea, .editor-wrap pre {
+      position:absolute; inset:0; margin:0; padding:10px 12px; border:0;
+      font: inherit; white-space:pre; overflow:auto; tab-size:2; }
+  .editor-wrap textarea { background:transparent; color:var(--fg); resize:none; outline:none; z-index:2; caret-color:var(--accent); }
+  .editor-wrap pre { z-index:1; pointer-events:none; color:transparent; }
+  mark { border-radius:3px; padding:0 1px; }
+  mark.err { background:rgba(255,122,122,.28); border-bottom:1px solid var(--bad); }
+  mark.sel { background:rgba(108,192,255,.30); }
+  .node { cursor:pointer; padding:1px 4px; border-radius:4px; white-space:nowrap; }
+  .node:hover { background:var(--panel2); }
+  .node .k { color:var(--dim); font-size:11px; margin-right:6px; }
+  .step { border:1px solid var(--line); border-radius:6px; margin-bottom:5px; background:var(--panel2); }
+  .step .head { display:flex; gap:8px; align-items:center; padding:5px 8px; cursor:pointer; }
+  .step .head:hover { background:#2d3340; }
+  .step .events { padding:4px 10px 8px 26px; font-family:ui-monospace,Menlo,monospace; font-size:11.5px; }
+  .ev { border-left:2px solid var(--line); padding:3px 8px; margin:3px 0; }
+  .ev.bad { border-left-color:var(--bad); }
+  .ev.ok { border-left-color:var(--ok); }
+  .badge { font-size:10.5px; padding:0 6px; border-radius:10px; border:1px solid var(--line); color:var(--dim); }
+  .badge.ok { color:var(--ok); border-color:var(--ok); }
+  .badge.bad { color:var(--bad); border-color:var(--bad); }
+  .badge.noop { color:var(--warn); border-color:var(--warn); }
+  .err-card { border:1px solid #6b3a3a; background:#2a2126; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+  .err-card h4 { margin:0 0 6px; color:var(--bad); font-size:13px; }
+  .ty { font-family:ui-monospace,Menlo,monospace; background:#1a1d24; padding:2px 6px; border-radius:4px; }
+  .chip { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; margin:2px 3px 2px 0;
+          border:1px solid var(--line); cursor:pointer; background:var(--panel); }
+  .chip.miss { border-color:#b5654a; color:#f0a48c; }
+  .chip.extra { border-color:#5f7f5a; color:#a8d29f; }
+  .core { border:1px dashed var(--line); border-radius:6px; padding:5px 8px; margin:5px 0; }
+  .core .member { font-family:ui-monospace,Menlo,monospace; font-size:11px; margin:2px 4px 2px 0;
+      padding:1px 6px; background:#1a1d24; border-radius:4px; cursor:pointer; display:inline-block; }
+  .core .member:hover { outline:1px solid var(--accent); }
+  #graph { width:100%; height:100%; background:#14161b; border-radius:0 0 8px 8px; }
+  .g-node { cursor:pointer; }
+  .g-node text { fill:var(--fg); font-size:9.5px; pointer-events:none; }
+  .legend { font-size:11px; color:var(--dim); display:flex; gap:10px; flex-wrap:wrap; }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:3px; }
+  .muted { color:var(--dim); }
+  .typeview { font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+  .tv { display:inline-block; border:1px solid transparent; border-radius:4px; padding:0 2px; cursor:default; }
+  .tv:hover { border-color:var(--accent); }
+  .tvvar { color:var(--warn); }
+  .tvq { color:#c79be8; }
+  .tvcon { color:var(--ok); }
+  .hidden { display:none !important; }
+  .scrollx { white-space:nowrap; }
+  .two { display:grid; grid-template-rows:auto 1fr; min-height:0; flex:1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>类型切片台</h1>
+  <select id="sessions"></select>
+  <button id="newSession">新建会话</button>
+  <span class="muted">|</span>
+  版本
+  <select id="versions"></select>
+  对比
+  <select id="compareV"><option value="">—</option></select>
+  <button id="addVersion" class="primary">保存为新版本</button>
+  <span class="muted" id="status"></span>
+  <span style="flex:1"></span>
+  <label class="muted"><input type="checkbox" id="showDisabled" checked /> 显示已禁用步骤</label>
+</header>
+<main>
+  <section class="pane">
+    <div class="bar">
+      <strong>源码</strong>
+      <button id="analyzeNow">即时分析</button>
+      <button id="loadDemo">载入演示</button>
+      <span class="muted" id="cursorInfo"></span>
+    </div>
+    <div class="editor-wrap">
+      <pre id="hl"></pre>
+      <textarea id="src" spellcheck="false"></textarea>
+    </div>
+  </section>
+
+  <section class="pane two">
+    <div class="bar">
+      <div class="tabs">
+        <div class="tab active" data-tab="ast">AST</div>
+        <div class="tab" data-tab="graph">约束图</div>
+        <div class="tab" data-tab="steps">统一步骤</div>
+        <div class="tab" data-tab="cores">错误核心</div>
+      </div>
+      <span style="flex:1"></span>
+      <span id="tabInfo" class="muted"></span>
+    </div>
+    <div class="body" id="paneBody" style="padding:0"></div>
+    <div id="astPane" class="body"></div>
+    <div id="graphPane" class="body hidden" style="padding:0; position:relative;">
+      <div class="bar" style="position:absolute; top:0; left:0; right:0; z-index:2; background:rgba(38,43,54,.92);">
+        <span class="legend">
+          <span><span class="dot" style="background:#8aa6c7"></span>变量引入</span>
+          <span><span class="dot" style="background:#7fd49b"></span>统一</span>
+          <span><span class="dot" style="background:#f5c46b"></span>泛化/实例化/内建</span>
+          <span><span class="dot" style="background:#ff7a7a"></span>错误/失效</span>
+          <span><span class="dot" style="background:#b07cd8"></span>match</span>
+        </span>
+      </div>
+      <svg id="graph" preserveAspectRatio="none"></svg>
+    </div>
+    <div id="stepsPane" class="body hidden"></div>
+    <div id="coresPane" class="body hidden"></div>
+  </section>
+
+  <section class="pane">
+    <div class="bar"><strong>类型与详情</strong></div>
+    <div class="body" id="detailPane">
+      <div class="muted">点击 AST 节点或步骤查看；错误卡片展示约束核心。</div>
+    </div>
+  </section>
+</main>
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const state = {
+  session: null, version: null, compareVersion: null,
+  payload: null, comparePayload: null,
+  selectedAction: null, selectedNode: null,
+  disabled: new Set(),
+  cursor: 0,
+};
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return r.json();
+}
+
+function setStatus(t, bad) {
+  const el = $("#status");
+  el.textContent = t || "";
+  el.style.color = bad ? "var(--bad)" : "var(--dim)";
+}
+
+// --- escaping & highlighting -----------------------------------------------
+function esc(s) {
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function spanOf(off, end) {
+  const src = $("#src").value;
+  const text = src.slice(0, off);
+  const line = text.split("\n").length - 1;
+  const lineStart = text.lastIndexOf("\n") + 1;
+  const col = off - lineStart;
+  return { line, col };
+}
+function renderHighlight(ranges) {
+  const src = $("#src").value;
+  const marks = (ranges || []).slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let out = "", pos = 0;
+  for (const [s, e, cls] of marks) {
+    if (s < pos) continue;
+    out += esc(src.slice(pos, s));
+    out += `<mark class="${cls}">${esc(src.slice(s, e))}</mark>`;
+    pos = e;
+  }
+  out += esc(src.slice(pos));
+  $("#hl").innerHTML = out;
+}
+function errorRanges() {
+  const a = state.payload?.analysis;
+  const ranges = [];
+  if (a?.parse_error) ranges.push([a.parse_error.start, Math.max(a.parse_error.end, a.parse_error.start + 1), "err"]);
+  for (const e of a?.result?.errors || []) {
+    if (e.span) ranges.push([e.span.start, Math.max(e.span.end, e.span.start + 1), "err"]);
+  }
+  return ranges;
+}
+function syncScroll() { $("#hl").scrollTop = $("#src").scrollTop; $("#hl").scrollLeft = $("#src").scrollLeft; }
+
+// --- sessions / versions ---------------------------------------------------
+async function loadSessions() {
+  const data = await api("/api/sessions");
+  $("#sessions").innerHTML = data.sessions.map((s) =>
+    `<option value="${s.id}">${esc(s.title)} #${s.id}</option>`).join("");
+  if (data.sessions.length) await selectSession(data.sessions[0].id);
+}
+async function selectSession(id) {
+  state.session = Number(id);
+  $("#sessions").value = id;
+  const data = await api(`/api/sessions/${id}/versions`);
+  $("#versions").innerHTML = data.versions.map((v) =>
+    `<option value="${v.id}">${esc(v.label)}</option>`).join("");
+  $("#compareV").innerHTML = `<option value="">—</option>` + data.versions.map((v) =>
+    `<option value="${v.id}">${esc(v.label)}</option>`).join("");
+  if (data.versions.length) await selectVersion(data.versions[data.versions.length - 1].id);
+}
+async function selectVersion(id) {
+  state.version = Number(id);
+  $("#versions").value = id;
+  const data = await api(`/api/versions/${id}/analyze`);
+  state.payload = data;
+  state.disabled = new Set(data.version.disabled || []);
+  state.cursor = data.version.cursor || 0;
+  $("#src").value = data.source;
+  renderAll();
+  setStatus(`已载入 ${data.version.label}`);
+}
+async function selectCompare(id) {
+  if (!id) { state.compareVersion = null; state.comparePayload = null; }
+  else {
+    state.compareVersion = Number(id);
+    state.comparePayload = await api(`/api/versions/${id}/analyze`);
+  }
+  renderAll();
+}
+
+$("#sessions").addEventListener("change", (e) => selectSession(e.target.value));
+$("#versions").addEventListener("change", (e) => selectVersion(e.target.value));
+$("#compareV").addEventListener("change", (e) => selectCompare(e.target.value));
+$("#newSession").addEventListener("click", async () => {
+  const title = prompt("会话标题", "我的推断会话");
+  if (!title) return;
+  const d = await api("/api/sessions", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title }),
+  });
+  await api(`/api/sessions/${d.id}/versions`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "-- 在这里写程序\n", label: "v1 初始版本" }),
+  });
+  await loadSessions();
+  $("#sessions").value = d.id;
+  await selectSession(d.id);
+});
+$("#addVersion").addEventListener("click", async () => {
+  if (!state.session) return;
+  const label = prompt("版本标签", `v${Date.now() % 100000}`);
+  if (!label) return;
+  const d = await api(`/api/sessions/${state.session}/versions`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: $("#src").value, label }),
+  });
+  await selectSession(state.session);
+  await selectVersion(d.id);
+});
+$("#loadDemo").addEventListener("click", () => {
+  $("#src").value = "let id = fun x -> x in id";
+  adHoc();
+});
+$("#analyzeNow").addEventListener("click", adHoc);
+let adHocTimer = null;
+$("#src").addEventListener("input", () => {
+  renderHighlight(errorRanges()); syncScroll();
+  clearTimeout(adHocTimer);
+  adHocTimer = setTimeout(adHoc, 400);
+});
+$("#src").addEventListener("scroll", syncScroll);
+
+async function adHoc() {
+  // Ad-hoc analysis uses a scratch session-less endpoint? We analyze by
+  // persisting a temp version into the current session is too heavy; instead
+  // reuse current version via compare mechanism: call analyze of the saved
+  // version, but for unsaved text we use the "scratch" endpoint.
+  try {
+    const r = await fetch("/api/scratch", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: $("#src").value,
+        disabled: [...state.disabled],
+        prev: state.payload?.source || null,
+      }),
+    });
+    if (!r.ok) return;
+    const data = await r.json();
+    const prevProgram = state.payload?.analysis?.program || null;
+    state.payload = { version: state.payload?.version || {}, source: $("#src").value, analysis: data.analysis };
+    renderAll();
+    setStatus("即时分析完成（未保存）");
+  } catch (e) { setStatus("分析失败：" + e.message, true); }
+}
+
+$("#showDisabled").addEventListener("change", renderSteps);
+
+// --- tabs ------------------------------------------------------------------
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+  t.classList.add("active");
+  const tab = t.dataset.tab;
+  for (const p of ["ast", "graph", "steps", "cores"]) $("#pane" + p[0].toUpperCase() + p.slice(1)).classList.add("hidden");
+  $("#pane" + tab[0].toUpperCase() + tab.slice(1)).classList.remove("hidden");
+  if (tab === "graph") drawGraph();
+}));
+
+// --- AST rendering ---------------------------------------------------------
+function renderAstNode(n, depth) {
+  const pad = depth * 14;
+  const reuseSet = new Set(state.payload?.analysis?.reuse?.reused_nodes || []);
+  const newSet = new Set(state.payload?.analysis?.reuse?.new_nodes || []);
+  let tag = "";
+  if (state.comparePayload && reuseSet.has(n.id)) tag = `<span class="badge ok">复用</span>`;
+  else if (state.comparePayload && newSet.has(n.id)) tag = `<span class="badge">新</span>`;
+  let html = `<div class="node" data-node="${n.id}" style="padding-left:${6 + pad}px">
+      <span class="k">${n.kind}</span>${esc(n.label)} ${tag}</div>`;
+  for (const c of n.children || []) html += renderAstNode(c, depth + 1);
+  return html;
+}
+
+function renderAll() {
+  renderHighlight(errorRanges());
+  const a = state.payload?.analysis;
+  $("#astPane").innerHTML = a?.ast ? renderAstNode(a.ast, 0)
+    : (a?.parse_error ? `<div class="err-card"><h4>解析失败</h4>${esc(a.parse_error.message)}
+        <div class="muted">位置 ${a.parse_error.start}..${a.parse_error.end}</div></div>`
+      : `<div class="muted">无内容</div>`);
+  $("#astPane").querySelectorAll(".node").forEach((el) =>
+    el.addEventListener("click", () => selectNode(Number(el.dataset.node))));
+  renderSteps();
+  renderCores();
+  renderDetail();
+  $("#tabInfo").textContent = a?.result
+    ? `${a.result.steps.length} 个动作 · ${a.result.errors.length} 个错误 · ${a.result.metas.length} 个变量 · ${a.result.schemes.length} 个方案`
+    : "";
+  if (document.querySelector(".tab.active").dataset.tab === "graph") drawGraph();
+}
+
+function selectNode(id) {
+  state.selectedNode = id;
+  const a = state.payload?.analysis;
+  const span = (a?.nodes || []).find((n) => n[0] === id);
+  if (span) {
+    renderHighlight([...errorRanges(), [span[1], Math.max(span[2], span[1] + 1), "sel"]]);
+  }
+  renderDetail();
+}
+
+// --- type view rendering ----------------------------------------------------
+function tvClass(node) {
+  if (node.node === "Var") return "tv tvvar";
+  if (node.node === "QVar") return "tv tvq";
+  if (node.node === "Con") return "tv tvcon";
+  return "tv";
+}
+function tvTip(v) {
+  if (v.node === "Var") return `${v.label}（level ${v.level}，?${v.id}）来源: ${[...(v.origins||[])].join(",")}`;
+  if (v.node === "QVar") return `量化变量 ${v.index}`;
+  return "来源: " + [...(v.origins || [])].join(",");
+}
+function renderTypeView(v) {
+  if (!v) return "";
+  const tip = esc(tvTip(v));
+  const open = (inner) => `<span class="${tvClass(v)}" data-origins="${[...(v.origins||[])].join(",")}" title="${tip}">${inner}</span>`;
+  switch (v.node) {
+    case "Var": return open(`?${v.id}`);
+    case "QVar": return open(quantName(v.index));
+    case "Con": return open(esc(v.name));
+    case "Fun": return open(`${renderTypeView(v.param)} → ${renderTypeView(v.result)}`);
+    case "Record":
+    case "Variant": {
+      const openC = v.node === "Record" ? ["{ ", " }"] : ["[ ", " ]"];
+      const parts = v.fields.map(([k, t]) =>
+        `${v.node === "Variant" ? "`" + esc(k) + " " : esc(k) + ": "}${renderTypeView(t)}`);
+      if (v.tail) parts.push(`| ${renderTypeView(v.tail)}`);
+      return open(openC[0] + parts.join(", ") + openC[1]);
+    }
+  }
+  return "";
+}
+function quantName(i) {
+  let n = i, s = "'";
+  do { s += String.fromCharCode(97 + (n % 26)); n = Math.floor(n / 26); if (n) n--; } while (n > 0);
+  return s;
+}
+function renderScheme(s) {
+  const qs = s.quantifiers.map(quantName).join(" ");
+  return `<div class="core"><b>${esc(s.role)}</b>
+    <span class="badge ${s.is_value ? "ok" : "noop"}">${s.is_value ? "可多态" : "value restriction"}</span>
+    <div class="ty">${s.is_value && qs ? "forall " + qs + ". " : ""}${esc(s.rendered.replace(/'[a-z]+/g, (q) => q))}</div></div>`;
+}
+
+// --- steps -----------------------------------------------------------------
+function actionLabel(id) {
+  const labels = new Map(state.payload?.analysis?.reuse?.action_labels || []);
+  return labels.get(id) || "new";
+}
+function reuseBadge(id) {
+  if (!state.comparePayload) return "";
+  const l = actionLabel(id);
+  if (l === "reused") return `<span class="badge ok" title="约束复用">复用</span>`;
+  if (l === "resolved") return `<span class="badge noop" title="身份复用但重新求解">重解</span>`;
+  if (l === "new") {
+    const invalid = new Set(state.payload.analysis.reuse.invalid_actions);
+    return `<span class="badge" style="color:var(--new);border-color:var(--new)">新</span>`;
+  }
+  return "";
+}
+function renderSteps() {
+  const a = state.payload?.analysis;
+  const steps = a?.result?.steps || [];
+  const showDisabled = $("#showDisabled").checked;
+  let html = `<div class="muted" style="margin-bottom:6px">
+    点击步骤定位约束；拖动游标可保存演示进度（重启后从该步继续）。
+    <div style="margin:6px 0">
+      <button id="stepPrev">◀</button> 步骤 <b>${Math.min(state.cursor + 1, Math.max(steps.length,1))}</b> / ${steps.length}
+      <button id="stepNext">▶</button>
+      <button id="stepSave">保存游标</button>
+    </div></div>`;
+  steps.forEach((s, i) => {
+    if (!showDisabled && s.status === "Noop") return;
+    const dim = i > state.cursor ? "opacity:.45" : "";
+    const badge = s.status === "Ok" ? `<span class="badge ok">ok</span>`
+      : s.status === "Failed" ? `<span class="badge bad">失败</span>`
+      : `<span class="badge noop">禁用</span>`;
+    const evs = (s.events || []).map((e) => `
+      <div class="ev ${e.ok ? "ok" : "bad"}">
+        <span class="muted">${esc(e.relation)}</span><br/>
+        <span class="scrollx">${esc(e.left)} ${e.ok ? "≡" : "≢"} ${esc(e.right)}</span>
+        <div class="muted">${esc(e.detail)}</div>
+      </div>`).join("");
+    html += `<div class="step" data-action="${esc(s.action_id)}" style="${dim}">
+      <div class="head">${badge}${reuseBadge(s.action_id)}
+        <span>${esc(s.title)}</span>
+        <span style="flex:1"></span><span class="muted">#${i}</span>
+      </div>${evs ? `<div class="events hidden">${evs}</div>` : ""}
+    </div>`;
+  });
+  $("#stepsPane").innerHTML = html;
+  $("#stepsPane").querySelectorAll(".step .head").forEach((h) =>
+    h.addEventListener("click", (ev) => {
+      const box = h.nextElementSibling;
+      if (box) box.classList.toggle("hidden");
+      selectAction(h.parentElement.dataset.action);
+    }));
+  $("#stepPrev").onclick = () => { state.cursor = Math.max(0, state.cursor - 1); renderSteps(); };
+  $("#stepNext").onclick = () => { state.cursor = Math.min(steps.length - 1, state.cursor + 1); renderSteps(); };
+  $("#stepSave").onclick = async () => {
+    if (!state.version) return;
+    await api(`/api/versions/${state.version}/cursor`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cursor: state.cursor }),
+    });
+    setStatus("游标已保存，重启后可从该步继续");
+  };
+}
+
+function selectAction(id) {
+  state.selectedAction = id;
+  const a = state.payload.analysis;
+  const action = a.program.actions.find((x) => x.id === id);
+  if (action) {
+    renderHighlight([...errorRanges(), [action.span.start, Math.max(action.span.end, action.span.start + 1), "sel"]]);
+  }
+  renderDetail();
+}
+
+// --- cores -----------------------------------------------------------------
+function renderCores() {
+  const a = state.payload?.analysis;
+  const errs = a?.result?.errors || [];
+  if (!errs.length) {
+    $("#coresPane").innerHTML = `<div class="muted">没有错误：所有约束可满足。</div>`;
+    return;
+  }
+  let html = `<div class="muted" style="margin-bottom:8px">
+    每个错误给出一个或多个<b>最小不可满足核心</b>（保持失败的最小约束集合）。
+    点击成员可定位；可临时禁用某条约束后重新分析。</div>`;
+  errs.forEach((e, i) => {
+    const miss = (e.missing || []).map((m) => `<span class="chip miss">缺 ${esc(m)}</span>`).join("");
+    const extra = (e.extra || []).map((m) => `<span class="chip extra">余 ${esc(m)}</span>`).join("");
+    const origins = [...new Set([...(e.left_origins || []), ...(e.right_origins || [])])];
+    html += `<div class="err-card">
+      <h4>错误 ${i + 1} · ${errorKindName(e.kind)}</h4>
+      <div>${esc(e.message)}</div>
+      ${e.left ? `<div style="margin-top:4px"><span class="muted">左：</span><span class="ty">${esc(e.left)}</span></div>` : ""}
+      ${e.right ? `<div><span class="muted">右：</span><span class="ty">${esc(e.right)}</span></div>` : ""}
+      ${miss || extra ? `<div style="margin-top:4px">${miss}${extra}</div>` : ""}
+      ${e.occurs_var ? `<div class="muted">变量 ${esc(e.occurs_var)} 递归出现在 ${esc(e.occurs_in)}</div>` : ""}
+      <div class="muted" style="margin-top:4px">来源表达式：
+        ${origins.map((o) => `<span class="chip" data-node="${o}">n${String(o).slice(0, 6)}</span>`).join(" ")}</div>
+      <div style="margin-top:6px"><b>最小核心（${(e.cores || []).length} 个候选）：</b></div>
+      ${(e.cores || []).map((core, ci) => `<div class="core">
+        <span class="muted">候选 ${ci + 1} · ${core.length} 条</span><br/>
+        ${core.map((m) => `<span class="member" data-action="${esc(m)}"
+            ${state.disabled.has(m) ? "style=opacity:.4;text-decoration:line-through" : ""}>${esc(shortAction(m))}</span>`).join(" ")}
+        <div style="margin-top:3px">
+          <button data-toggle-core="${ci}" data-err="${i}">禁用此核心全部成员</button>
+          <button data-verify-core="${ci}" data-err="${i}">单独保留此核心验证</button>
+        </div>
+      </div>`).join("")}
+    </div>`;
+  });
+  $("#coresPane").innerHTML = html;
+  $("#coresPane").querySelectorAll("[data-node]").forEach((el) =>
+    el.addEventListener("click", () => selectNode(Number(el.dataset.node))));
+  $("#coresPane").querySelectorAll("[data-action]").forEach((el) =>
+    el.addEventListener("click", () => selectAction(el.dataset.action)));
+  $("#coresPane").querySelectorAll("[data-toggle-core]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const e = errs[b.dataset.err];
+      for (const m of e.cores[b.dataset.toggleCore]) {
+        if (state.disabled.has(m)) state.disabled.delete(m); else state.disabled.add(m);
+      }
+      persistDisabledAndRerun();
+    }));
+  $("#coresPane").querySelectorAll("[data-verify-core]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const e = errs[b.dataset.err];
+      const core = new Set(e.cores[b.dataset.verifyCore]);
+      const all = new Set(a.program.actions.map((x) => x.id));
+      state.disabled = new Set([...all].filter((id) => !core.has(id) && !isNonConstraint(id, a)));
+      persistDisabledAndRerun();
+    }));
+}
+
+function isNonConstraint(id, a) {
+  const act = a.program.actions.find((x) => x.id === id);
+  return act && ["Intro", "EnterScope", "ExitScope"].includes(act.kind.kind);
+}
+async function persistDisabledAndRerun() {
+  if (state.version) {
+    await api(`/api/versions/${state.version}/disabled`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ disabled: [...state.disabled] }),
+    });
+    const data = await api(`/api/versions/${state.version}/analyze`);
+    state.payload = data;
+  } else {
+    await adHoc();
+  }
+  renderAll();
+}
+function errorKindName(k) {
+  return ({
+    occurs: "无限类型（occurs check）", ctor: "基础类型冲突", shape: "类型形状冲突",
+    record_row: "记录字段不匹配", variant_row: "变体标签不匹配", row_kind: "行种类冲突",
+    row_tail: "行尾冲突", unbound: "未绑定变量",
+  })[k] || k;
+}
+function shortAction(id) {
+  const a = state.payload.analysis.program.actions.find((x) => x.id === id);
+  return a ? a.title.length > 18 ? a.title.slice(0, 18) + "…" : a.title : id;
+}
+
+// --- detail ----------------------------------------------------------------
+function renderDetail() {
+  const a = state.payload?.analysis;
+  if (!a?.result) { $("#detailPane").innerHTML = `<div class="muted">无分析结果</div>`; return; }
+  let html = `<div><b>程序最终类型</b><div class="typeview" style="margin:4px 0 10px">${renderTypeView(a.result.root_type)}</div></div>`;
+
+  if (state.selectedNode != null) {
+    const nt = a.result.node_types.find((x) => x[0] === state.selectedNode);
+    if (nt) html += `<div class="core"><b>节点 n${String(state.selectedNode).slice(0,8)}… 的类型</b>
+      <div class="typeview">${renderTypeView(nt[1])}</div></div>`;
+  }
+  if (state.selectedAction) {
+    const act = a.program.actions.find((x) => x.id === state.selectedAction);
+    if (act) {
+      const step = a.result.steps.find((s) => s.action_id === act.id);
+      const disabled = state.disabled.has(act.id);
+      html += `<div class="core"><b>${esc(act.title)}</b>
+        <div class="muted">${esc(act.id)} · scope ${String(act.scope_key).slice(0,6)} · genv ${String(act.genv_key).slice(0,6)}</div>
+        <div class="typeview scrollx" style="white-space:pre-wrap">${esc(JSON.stringify(act.kind, null, 1))}</div>
+        ${step ? `<div class="muted">执行：${step.summary}</div>` : ""}
+        <div style="margin-top:5px">
+          <button id="toggleAction">${disabled ? "重新启用" : "临时禁用"}该约束</button>
+        </div></div>`;
+    }
+  }
+  html += `<div style="margin-top:8px"><b>方案（泛化结果）</b>${a.result.schemes.map(renderScheme).join("") || '<div class="muted">无</div>'}</div>`;
+
+  // version comparison
+  if (state.comparePayload) {
+    const r1 = state.comparePayload.analysis.reuse;
+    const r2 = a.reuse;
+    const counts = (list) => list.length;
+    html += `<div class="core" style="margin-top:10px"><b>版本复用对比</b>
+      <div><span class="badge ok">复用 ${counts(r2.reused_actions)}</span>
+           <span class="badge noop">重解 ${counts(r2.resolved_actions)}</span>
+           <span class="badge" style="color:var(--new);border-color:var(--new)">新增 ${counts(r2.new_actions)}</span>
+           <span class="badge bad">失效 ${counts(r1 ? r1.invalid_actions : [])}</span></div>
+      <div class="muted">节点：复用 ${counts(r2.reused_nodes)} · 新增 ${counts(r2.new_nodes)} · 丢失 ${counts(r1 ? r1.lost_nodes : [])}</div>
+      <div class="muted" style="margin-top:4px">缓存键包含作用域哈希与泛化环境哈希；变量改名不会改变结构身份。</div>
+      </div>`;
+  }
+  $("#detailPane").innerHTML = html;
+  const btn = $("#toggleAction");
+  if (btn) btn.addEventListener("click", async () => {
+    if (state.disabled.has(state.selectedAction)) state.disabled.delete(state.selectedAction);
+    else state.disabled.add(state.selectedAction);
+    await persistDisabledAndRerun();
+  });
+  $("#detailPane").querySelectorAll("[data-origins]").forEach((el) =>
+    el.addEventListener("click", () => {
+      const ids = el.dataset.origins.split(",").filter(Boolean).map(Number);
+      if (ids.length) selectNode(ids[0]);
+    }));
+}
+
+// --- graph -----------------------------------------------------------------
+function drawGraph() {
+  const a = state.payload?.analysis;
+  const svg = $("#graph");
+  if (!a?.graph) { svg.innerHTML = ""; return; }
+  const rect = svg.getBoundingClientRect();
+  const W = Math.max(rect.width, 700), H = Math.max(rect.height, 400);
+  const nodes = a.graph.nodes, links = a.graph.links;
+  const N = nodes.length;
+  const idx = new Map(nodes.map((n, i) => [n.id, i]));
+  const color = (k) => ({
+    intro: "#8aa6c7", scope: "#6b7280", unify: "#7fd49b", prim: "#f5c46b",
+    match: "#b07cd8", generalize: "#f5c46b", instantiate: "#f5c46b", error: "#ff7a7a",
+  }[k] || "#9aa4b5");
+  // simple force simulation
+  const pos = nodes.map((_, i) => ({
+    x: 60 + (i % 9) * (W - 120) / 8 + (Math.random() - .5) * 20,
+    y: 40 + Math.floor(i / 9) * 70 + (Math.random() - .5) * 16,
+    vx: 0, vy: 0,
+  }));
+  const edges = links.map((l) => ({ s: idx.get(l.source), t: idx.get(l.target) })).filter((e) => e.s != null && e.t != null);
+  for (let iter = 0; iter < 220; iter++) {
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      let dx = pos[i].x - pos[j].x, dy = pos[i].y - pos[j].y;
+      let d2 = dx * dx + dy * dy + .01;
+      const f = 900 / d2;
+      pos[i].vx += dx * f * .01; pos[i].vy += dy * f * .01;
+      pos[j].vx -= dx * f * .01; pos[j].vy -= dy * f * .01;
+    }
+    for (const e of edges) {
+      const dx = pos[e.t].x - pos[e.s].x, dy = pos[e.t].y - pos[e.s].y;
+      const d = Math.sqrt(dx * dx + dy * dy) + .01;
+      const f = (d - 90) * .004;
+      pos[e.s].vx += dx / d * f * 6; pos[e.s].vy += dy / d * f * 6;
+      pos[e.t].vx -= dx / d * f * 6; pos[e.t].vy -= dy / d * f * 6;
+    }
+    for (const p of pos) {
+      p.vx *= .82; p.vy *= .82;
+      p.x = Math.max(40, Math.min(W - 40, p.x + p.vx));
+      p.y = Math.max(36, Math.min(H - 20, p.y + p.vy));
+    }
+  }
+  let out = "";
+  for (const e of edges) {
+    out += `<line x1="${pos[e.s].x}" y1="${pos[e.s].y}" x2="${pos[e.t].x}" y2="${pos[e.t].y}"
+      stroke="#3d4657" stroke-width="1"/>`;
+  }
+  nodes.forEach((n, i) => {
+    const p = pos[i];
+    const failed = (a.result.steps[i] && a.result.steps[i].status === "Failed");
+    const c = failed ? "#ff7a7a" : color(n.kind);
+    const reuse = state.comparePayload ? actionLabel(n.id) : null;
+    const ring = reuse === "reused" ? "#7fd49b" : reuse === "resolved" ? "#f5c46b" : reuse === "new" ? "#6cc0ff" : "transparent";
+    out += `<g class="g-node" transform="translate(${p.x},${p.y})" data-action="${esc(n.id)}">
+      <circle r="7" fill="${c}" stroke="${ring}" stroke-width="3"/>
+      <text x="9" y="3">${esc((n.title || n.kind).slice(0, 14))}</text></g>`;
+  });
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = out;
+  svg.querySelectorAll(".g-node").forEach((g) =>
+    g.addEventListener("click", () => {
+      selectAction(g.dataset.action);
+      document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+      const t = document.querySelector('[data-tab="steps"]');
+      t.classList.add("active");
+      for (const p of ["ast", "graph", "cores"]) $("#pane" + p[0].toUpperCase() + p.slice(1)).classList.add("hidden");
+      $("#paneSteps").classList.remove("hidden");
+      renderSteps();
+    }));
+}
+
+// --- boot ------------------------------------------------------------------
+(async function boot() {
+  try {
+    await loadSessions();
+  } catch (e) {
+    setStatus("初始化失败：" + e.message, true);
+  }
+})();
+</script>
+</body>
+</html>
