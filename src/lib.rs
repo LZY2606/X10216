@@ -1,0 +1,11 @@
+//! 类型切片台：Hindley-Milner 风格语言的增量推断演示内核。
+pub mod ast;
+pub mod parser;
+pub mod types;
+pub mod solve;
+pub mod constraints;
+pub mod analyze;
+pub mod incremental;
+pub mod storage;
+pub mod web;
+pub mod web_ui;
