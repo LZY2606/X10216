@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>类型切片台</title>
+<style>
+  :root { --bg:#0f1420; --panel:#171e2e; --border:#2a3550; --fg:#dbe4ff; --dim:#8b98b8;
+          --acc:#6ea8fe; --err:#ff7a7a; --ok:#7bd88f; --warn:#ffd479; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; background:var(--bg); color:var(--fg); }
+  header { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; gap:12px; align-items:center; }
+  header h1 { font-size:18px; margin:0; color:var(--acc); }
+  button { background:#223; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  main { display:grid; grid-template-columns: 42% 58%; height:calc(100vh - 49px); }
+  .left { border-right:1px solid var(--border); display:flex; flex-direction:column; }
+  textarea { flex:1; background:var(--panel); color:var(--fg); border:0; padding:12px; resize:none;
+             font:inherit; outline:none; }
+  .toolbar { padding:8px; border-top:1px solid var(--border); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .right { overflow:auto; padding:10px 14px; }
+  .tabs { display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; }
+  .tabs button.active { border-color:var(--acc); color:var(--acc); }
+  .pane { display:none; }
+  .pane.active { display:block; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:8px 10px; margin-bottom:8px; }
+  .span { color:var(--dim); font-size:12px; }
+  .err { color:var(--err); }
+  .ok { color:var(--ok); }
+  .warn { color:var(--warn); }
+  .cid { color:var(--dim); font-size:11px; word-break:break-all; }
+  .core-member { display:inline-block; border:1px solid var(--warn); border-radius:4px; padding:0 4px; margin:2px; cursor:pointer; font-size:11px; }
+  .core-member:hover { background:var(--warn); color:#000; }
+  .step { border-left:2px solid var(--border); padding:2px 8px; margin:2px 0; }
+  .step.error { border-color:var(--err); }
+  .step.unify { border-color:var(--acc); }
+  .step.generalize { border-color:var(--ok); }
+  .step.instantiate { border-color:var(--warn); }
+  .hl { background:#3d2c2c; }
+  mark { background:#554411; color:#fff; }
+  pre { margin:4px 0; white-space:pre-wrap; word-break:break-all; }
+  .ast details { margin-left:14px; }
+  .ast summary { cursor:pointer; }
+  select, input { background:var(--panel); color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:3px 6px; }
+  .diff-reused { color:var(--ok); } .diff-inv { color:var(--err); } .diff-add { color:var(--warn); }
+  .row { display:flex; gap:6px; align-items:baseline; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>类型切片台</h1>
+  <span class="span">Hindley-Milner 约束求解可视化 · let 多态 / record / variant / 行多态 / 错误核心</span>
+</header>
+<main>
+  <div class="left">
+    <textarea id="src" spellcheck="false">let id = fun x -> x in
+let a = id 1 in
+let r = { name = id true, age = id 42 } in
+match `Some r.age with
+| `Some n -> id n
+| `None z -> 0</textarea>
+    <div class="toolbar">
+      <button id="analyze">分析 (Ctrl+Enter)</button>
+      <label class="span">会话 <input id="session" size="4" value=""></label>
+      <button id="newsession">新会话</button>
+      <label class="span">对比版本 <select id="cmpA"></select> → <select id="cmpB"></select></label>
+      <button id="dodiff">对比</button>
+      <span id="status" class="span"></span>
+    </div>
+  </div>
+  <div class="right">
+    <div class="tabs">
+      <button data-p="types" class="active">类型</button>
+      <button data-p="ast">AST</button>
+      <button data-p="constraints">约束图</button>
+      <button data-p="steps">统一步骤</button>
+      <button data-p="errors">错误核心</button>
+      <button data-p="diff">版本对比</button>
+    </div>
+    <div id="p-types" class="pane active"></div>
+    <div id="p-ast" class="pane ast"></div>
+    <div id="p-constraints" class="pane"></div>
+    <div id="p-steps" class="pane"></div>
+    <div id="p-errors" class="pane"></div>
+    <div id="p-diff" class="pane"></div>
+  </div>
+</main>
+<script>
+let currentVersion = null;
+let currentAnalysis = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+  b.classList.add('active');
+  $('p-' + b.dataset.p).classList.add('active');
+});
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof j === 'string' ? j : (j.message || r.statusText));
+  return j;
+}
+
+async function ensureSession() {
+  let s = $('session').value.trim();
+  if (s) return s;
+  const j = await api('/api/sessions', { method: 'POST' });
+  $('session').value = j.session_id;
+  return j.session_id;
+}
+
+$('newsession').onclick = async () => {
+  const j = await api('/api/sessions', { method: 'POST' });
+  $('session').value = j.session_id;
+  $('status').textContent = '新会话 #' + j.session_id;
+};
+
+async function analyze() {
+  try {
+    const sid = await ensureSession();
+    const j = await api(`/api/sessions/${sid}/analyze`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source: $('src').value })
+    });
+    currentVersion = j.version_id;
+    currentAnalysis = j.analysis;
+    $('status').textContent = `版本 #${j.version_id} · ${j.analysis.constraints.length} 约束 · ${j.analysis.steps.length} 步 · ${j.analysis.errors.length} 错误`;
+    renderAll(j.analysis);
+    refreshVersions();
+  } catch (e) { $('status').textContent = '错误: ' + e.message; }
+}
+
+$('analyze').onclick = analyze;
+$('src').addEventListener('keydown', e => { if (e.ctrlKey && e.key === 'Enter') analyze(); });
+
+async function refreshVersions() {
+  const sid = $('session').value.trim();
+  if (!sid) return;
+  try {
+    const j = await api(`/api/sessions/${sid}`);
+    for (const sel of [$('cmpA'), $('cmpB')]) {
+      sel.innerHTML = j.versions.map(v => `<option value="${v.id}">v${v.id}</option>`).join('');
+    }
+    if (j.versions.length) $('cmpB').value = j.versions[j.versions.length - 1].id;
+  } catch (e) { /* session may not exist yet */ }
+}
+$('session').addEventListener('change', refreshVersions);
+
+async function loadVersion(vid) {
+  const j = await api(`/api/versions/${vid}`);
+  $('src').value = j.source;
+  currentVersion = vid;
+  currentAnalysis = j.analysis;
+  renderAll(j.analysis);
+  $('status').textContent = `已恢复版本 #${vid}（可从任一步骤继续查看）`;
+}
+
+function renderAll(a) {
+  renderTypes(a); renderAst(a); renderConstraints(a); renderSteps(a); renderErrors(a);
+}
+
+function renderTypes(a) {
+  let h = '';
+  h += `<div class="card">根类型: <b class="${a.errors.length ? 'warn' : 'ok'}">${esc(a.root_type ?? '?')}</b></div>`;
+  const nodes = Object.entries(a.node_types).sort((x, y) => x[0] - y[0]);
+  h += nodes.map(([id, t]) =>
+    `<div class="card row" data-node="${id}"><span class="span">#${id}</span> <code>${esc(t)}</code></div>`).join('');
+  $('p-types').innerHTML = h;
+}
+
+function astHtml(n, a) {
+  const kind = Object.keys(n.kind)[0];
+  const kids = [];
+  const v = n.kind[kind];
+  const push = (label, c) => kids.push(`<div>${label}${astHtml(c, a)}</div>`);
+  if (kind === 'Fun') push(`参数 ${esc(v.param)}: `, v.body);
+  else if (kind === 'App') { push('函数: ', v[0]); push('参数: ', v[1]); }
+  else if (kind === 'Let') { push(`值 ${esc(v.name)}${v.rec_ ? ' (rec)' : ''}: `, v.value); push('体: ', v.body); }
+  else if (kind === 'If') { push('条件: ', v[0]); push('则: ', v[1]); push('否: ', v[2]); }
+  else if (kind === 'Record') v.forEach(([l, c]) => push(`${esc(l)} = `, c));
+  else if (kind === 'Proj') push(`.${esc(v[1])} ← `, v[0]);
+  else if (kind === 'Variant') push('`' + esc(v[0]) + ' ', v[1]);
+  else if (kind === 'Match') { push(' scrut: ', v[0]); v[1].forEach(([l, b, c]) => push(`| \`${esc(l)} ${esc(b)} -> `, c)); }
+  const t = a.node_types[n.id] ?? '';
+  const leaf = ['Int','Bool','Var'].includes(kind) ? ' ' + esc(JSON.stringify(Object.values(n.kind)[0])) : '';
+  return `<details open><summary><b>${kind}</b>${leaf} <span class="span">[${n.span[0]},${n.span[1]}] : ${esc(t)}</span></summary>${kids.join('')}</details>`;
+}
+
+function renderAst(a) { $('p-ast').innerHTML = astHtml(a.ast, a); }
+
+function ckind(c) {
+  const k = Object.keys(c.kind)[0];
+  const v = c.kind[k];
+  if (k === 'Unify') return `Unify`;
+  if (k === 'Inst') return `Inst ${esc(v.name)}`;
+  if (k === 'Gen') return `Gen ${esc(v.name)}${v.expansive ? ' (值限制)' : ''}`;
+  if (k === 'BindMono') return `Bind ${esc(v.name)}`;
+  return k;
+}
+
+function renderConstraints(a) {
+  $('p-constraints').innerHTML = a.constraints.map((c, i) => `
+    <div class="card" id="c-${i}">
+      <div class="row"><b>#${i} ${ckind(c)}</b>
+        <span class="span">[${c.prov.span[0]},${c.prov.span[1]}] ${esc(c.prov.desc)}</span>
+        <button onclick="disableC('${esc(c.id)}')">临时禁用</button>
+        <button onclick="hiSpan(${c.prov.span[0]},${c.prov.span[1]})">定位源码</button>
+      </div>
+      <div class="cid">${esc(c.id)}</div>
+      <div id="dis-${i}"></div>
+    </div>`).join('');
+  window._constraints = a.constraints;
+}
+
+async function disableC(cid) {
+  if (!currentVersion) return;
+  const j = await api(`/api/versions/${currentVersion}/disable`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ constraint_id: cid })
+  });
+  const msg = j.still_errors.length
+    ? `<span class="err">禁用后仍有错误: ${j.still_errors.map(esc).join('; ')}</span>`
+    : `<span class="ok">禁用后错误消失，根类型 = ${esc(j.root_type ?? '?')}</span>`;
+  const i = window._constraints.findIndex(c => c.id === cid);
+  $('dis-' + i).innerHTML = msg;
+}
+
+function hiSpan(s, t) {
+  const ta = $('src');
+  ta.focus(); ta.setSelectionRange(s, t);
+}
+
+function renderSteps(a) {
+  $('p-steps').innerHTML = a.steps.map(s => `
+    <div class="step ${esc(s.action)}">
+      <span class="span">#${s.index} [${s.span[0]},${s.span[1]}]</span>
+      <b>${esc(s.action)}</b> ${esc(s.detail)}
+    </div>`).join('');
+}
+
+function renderErrors(a) {
+  if (!a.errors.length) { $('p-errors').innerHTML = '<div class="card ok">没有错误 ✓</div>'; return; }
+  $('p-errors').innerHTML = a.errors.map((e, i) => {
+    const cores = e.cores.map((core, ci) => `
+      <div>候选核心 ${ci + 1}（${core.length} 条）:
+        ${[...core].map(cid => {
+          const idx = a.constraints.findIndex(c => c.id === cid);
+          return `<span class="core-member" title="${esc(cid)}" onclick="hiSpan(${a.constraints[idx].prov.span[0]},${a.constraints[idx].prov.span[1]})">#${idx}</span>`;
+        }).join('')}
+      </div>`).join('');
+    return `<div class="card">
+      <div class="err"><b>错误 ${i + 1}</b>: ${esc(e.error.message)}</div>
+      <div class="span">来源 [${e.error.span[0]},${e.error.span[1]}] — ${esc(e.error.desc)}
+        <button onclick="hiSpan(${e.error.span[0]},${e.error.span[1]})">定位源码</button></div>
+      <div class="span">约束: ${esc(e.error.constraint_id)}</div>
+      ${cores}
+    </div>`;
+  }).join('');
+}
+
+$('dodiff').onclick = async () => {
+  const a = $('cmpA').value, b = $('cmpB').value;
+  if (!a || !b) return;
+  const j = await api(`/api/versions/${b}/diff?against=${a}`);
+  const names = { reused: '复用', invalidated: '失效', added: '新增/重新求解' };
+  $('p-diff').innerHTML = ['reused', 'invalidated', 'added'].map(k => `
+    <div class="card"><b class="diff-${k === 'reused' ? 'reused' : k === 'invalidated' ? 'inv' : 'add'}">${names[k]} (${j[k].length})</b>
+      ${j[k].map(id => `<div class="cid">${esc(id)}</div>`).join('') || '<div class="span">（无）</div>'}
+    </div>`).join('');
+  document.querySelector('[data-p="diff"]').click();
+};
+
+// restore session from URL hash on load (sessions survive restarts via SQLite)
+if (location.hash.length > 1) {
+  $('session').value = location.hash.slice(1);
+  refreshVersions().then(() => { const v = $('cmpB').value; if (v) loadVersion(v); });
+}
+</script>
+</body>
+</html>
