@@ -1,0 +1,21 @@
+[package]
+name = "type-slicer"
+version = "0.1.0"
+edition = "2021"
+description = "类型切片台 — Hindley-Milner 约束推断演示"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["fs", "trace"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+twox-hash = "1"
+
+[profile.dev]
+opt-level = 0
+
+[[bin]]
+name = "type-slicer"
+path = "src/main.rs"
