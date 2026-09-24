@@ -1,0 +1,16 @@
+[package]
+name = "type-slicing-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "type-slicing-bench"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[profile.dev]
+opt-level = 1
