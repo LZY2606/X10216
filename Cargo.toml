@@ -1,0 +1,24 @@
+[package]
+name = "type-slicer"
+version = "0.1.0"
+edition = "2021"
+description = "类型切片台：Hindley-Milner 类型推断过程切片演示"
+
+[lib]
+name = "type_slicer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "type-slicer"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { value }
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+[profile.dev]
+opt-level = 0
