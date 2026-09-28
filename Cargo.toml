@@ -1,0 +1,16 @@
+[package]
+name = "type-slice-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+tower-http = { version = "0.6", features = ["fs", "trace"] }
+
+[[bin]]
+name = "type-slice-bench"
+path = "src/main.rs"
